@@ -24,11 +24,13 @@ import (
 // NewKubeAPIServer creates a new hyperkube Server object that includes the
 // description and flags.
 func NewKubeAPIServer() *Server {
-	s := options.NewAPIServer()
+	s := options.NewServerRunOptions()
 
 	hks := Server{
-		SimpleUsage: "apiserver",
-		Long:        "The main API entrypoint and interface to the storage system.  The API server is also the focal point for all authorization decisions.",
+		name:            "apiserver",
+		AlternativeName: "kube-apiserver",
+		SimpleUsage:     "apiserver",
+		Long:            "The main API entrypoint and interface to the storage system.  The API server is also the focal point for all authorization decisions.",
 		Run: func(_ *Server, args []string) error {
 			return app.Run(s)
 		},

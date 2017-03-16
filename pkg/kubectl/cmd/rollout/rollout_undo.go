@@ -19,13 +19,14 @@ package rollout
 import (
 	"io"
 
-	"github.com/renstrom/dedent"
-	"k8s.io/kubernetes/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/kubernetes/pkg/kubectl"
+	"k8s.io/kubernetes/pkg/kubectl/cmd/templates"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 	"k8s.io/kubernetes/pkg/kubectl/resource"
-	"k8s.io/kubernetes/pkg/runtime"
-	utilerrors "k8s.io/kubernetes/pkg/util/errors"
+	"k8s.io/kubernetes/pkg/util/i18n"
 
 	"github.com/spf13/cobra"
 )
@@ -46,9 +47,10 @@ type UndoOptions struct {
 }
 
 var (
-	undo_long = dedent.Dedent(`
+	undo_long = templates.LongDesc(`
 		Rollback to a previous rollout.`)
-	undo_example = dedent.Dedent(`
+
+	undo_example = templates.Examples(`
 		# Rollback to the previous deployment
 		kubectl rollout undo deployment/abc
 
@@ -67,7 +69,7 @@ func NewCmdRolloutUndo(f cmdutil.Factory, out io.Writer) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "undo (TYPE NAME | TYPE/NAME) [flags]",
-		Short:   "Undo a previous rollout",
+		Short:   i18n.T("Undo a previous rollout"),
 		Long:    undo_long,
 		Example: undo_example,
 		Run: func(cmd *cobra.Command, args []string) {

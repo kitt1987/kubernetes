@@ -24,50 +24,53 @@ import (
 
 	"github.com/spf13/cobra"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/kubectl"
+	"k8s.io/kubernetes/pkg/kubectl/cmd/templates"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
+	"k8s.io/kubernetes/pkg/printers"
+	"k8s.io/kubernetes/pkg/util/i18n"
 )
 
 // NewCmdCreateSecret groups subcommands to create various types of secrets
 func NewCmdClusterInfoDump(f cmdutil.Factory, cmdOut io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "dump",
-		Short:   "Dump lots of relevant info for debugging and diagnosis",
+		Short:   i18n.T("Dump lots of relevant info for debugging and diagnosis"),
 		Long:    dumpLong,
 		Example: dumpExample,
 		Run: func(cmd *cobra.Command, args []string) {
 			cmdutil.CheckErr(dumpClusterInfo(f, cmd, args, cmdOut))
 		},
 	}
-	cmd.Flags().String("output-directory", "", "Where to output the files.  If empty or '-' uses stdout, otherwise creates a directory hierarchy in that directory")
+	cmd.Flags().String("output-directory", "", i18n.T("Where to output the files.  If empty or '-' uses stdout, otherwise creates a directory hierarchy in that directory"))
 	cmd.Flags().StringSlice("namespaces", []string{}, "A comma separated list of namespaces to dump.")
 	cmd.Flags().Bool("all-namespaces", false, "If true, dump all namespaces.  If true, --namespaces is ignored.")
 	return cmd
 }
 
-const (
-	dumpLong = `
-Dumps cluster info out suitable for debugging and diagnosing cluster problems.  By default, dumps everything to
-stdout. You can optionally specify a directory with --output-directory.  If you specify a directory, kubernetes will
-build a set of files in that directory.  By default only dumps things in the 'kube-system' namespace, but you can
-switch to a different namespace with the --namespaces flag, or specify --all-namespaces to dump all namespaces.
+var (
+	dumpLong = templates.LongDesc(`
+    Dumps cluster info out suitable for debugging and diagnosing cluster problems.  By default, dumps everything to
+    stdout. You can optionally specify a directory with --output-directory.  If you specify a directory, kubernetes will
+    build a set of files in that directory.  By default only dumps things in the 'kube-system' namespace, but you can
+    switch to a different namespace with the --namespaces flag, or specify --all-namespaces to dump all namespaces.
 
-The command also dumps the logs of all of the pods in the cluster, these logs are dumped into different directories
-based on namespace and pod name.
-`
+    The command also dumps the logs of all of the pods in the cluster, these logs are dumped into different directories
+    based on namespace and pod name.`)
 
-	dumpExample = `# Dump current cluster state to stdout
-kubectl cluster-info dump
+	dumpExample = templates.Examples(`
+    # Dump current cluster state to stdout
+    kubectl cluster-info dump
 
-# Dump current cluster state to /path/to/cluster-state
-kubectl cluster-info dump --output-directory=/path/to/cluster-state
+    # Dump current cluster state to /path/to/cluster-state
+    kubectl cluster-info dump --output-directory=/path/to/cluster-state
 
-# Dump all namespaces to stdout
-kubectl cluster-info dump --all-namespaces
+    # Dump all namespaces to stdout
+    kubectl cluster-info dump --all-namespaces
 
-# Dump a set of namespaces to /path/to/cluster-state
-kubectl cluster-info dump --namespaces default,kube-system --output-directory=/path/to/cluster-state`
+    # Dump a set of namespaces to /path/to/cluster-state
+    kubectl cluster-info dump --namespaces default,kube-system --output-directory=/path/to/cluster-state`)
 )
 
 func setupOutputWriter(cmd *cobra.Command, defaultWriter io.Writer, filename string) io.Writer {
@@ -90,12 +93,9 @@ func dumpClusterInfo(f cmdutil.Factory, cmd *cobra.Command, args []string, out i
 		return err
 	}
 
-	printer, _, err := kubectl.GetPrinter("json", "", false)
-	if err != nil {
-		return err
-	}
+	printer := &printers.JSONPrinter{}
 
-	nodes, err := clientset.Core().Nodes().List(api.ListOptions{})
+	nodes, err := clientset.Core().Nodes().List(metav1.ListOptions{})
 	if err != nil {
 		return err
 	}
@@ -106,7 +106,7 @@ func dumpClusterInfo(f cmdutil.Factory, cmd *cobra.Command, args []string, out i
 
 	var namespaces []string
 	if cmdutil.GetFlagBool(cmd, "all-namespaces") {
-		namespaceList, err := clientset.Core().Namespaces().List(api.ListOptions{})
+		namespaceList, err := clientset.Core().Namespaces().List(metav1.ListOptions{})
 		if err != nil {
 			return err
 		}
@@ -121,7 +121,7 @@ func dumpClusterInfo(f cmdutil.Factory, cmd *cobra.Command, args []string, out i
 				return err
 			}
 			namespaces = []string{
-				api.NamespaceSystem,
+				metav1.NamespaceSystem,
 				cmdNamespace,
 			}
 		}
@@ -129,7 +129,7 @@ func dumpClusterInfo(f cmdutil.Factory, cmd *cobra.Command, args []string, out i
 	for _, namespace := range namespaces {
 		// TODO: this is repetitive in the extreme.  Use reflection or
 		// something to make this a for loop.
-		events, err := clientset.Core().Events(namespace).List(api.ListOptions{})
+		events, err := clientset.Core().Events(namespace).List(metav1.ListOptions{})
 		if err != nil {
 			return err
 		}
@@ -137,7 +137,7 @@ func dumpClusterInfo(f cmdutil.Factory, cmd *cobra.Command, args []string, out i
 			return err
 		}
 
-		rcs, err := clientset.Core().ReplicationControllers(namespace).List(api.ListOptions{})
+		rcs, err := clientset.Core().ReplicationControllers(namespace).List(metav1.ListOptions{})
 		if err != nil {
 			return err
 		}
@@ -145,7 +145,7 @@ func dumpClusterInfo(f cmdutil.Factory, cmd *cobra.Command, args []string, out i
 			return err
 		}
 
-		svcs, err := clientset.Core().Services(namespace).List(api.ListOptions{})
+		svcs, err := clientset.Core().Services(namespace).List(metav1.ListOptions{})
 		if err != nil {
 			return err
 		}
@@ -153,7 +153,7 @@ func dumpClusterInfo(f cmdutil.Factory, cmd *cobra.Command, args []string, out i
 			return err
 		}
 
-		sets, err := clientset.Extensions().DaemonSets(namespace).List(api.ListOptions{})
+		sets, err := clientset.Extensions().DaemonSets(namespace).List(metav1.ListOptions{})
 		if err != nil {
 			return err
 		}
@@ -161,7 +161,7 @@ func dumpClusterInfo(f cmdutil.Factory, cmd *cobra.Command, args []string, out i
 			return err
 		}
 
-		deps, err := clientset.Extensions().Deployments(namespace).List(api.ListOptions{})
+		deps, err := clientset.Extensions().Deployments(namespace).List(metav1.ListOptions{})
 		if err != nil {
 			return err
 		}
@@ -169,7 +169,7 @@ func dumpClusterInfo(f cmdutil.Factory, cmd *cobra.Command, args []string, out i
 			return err
 		}
 
-		rps, err := clientset.Extensions().ReplicaSets(namespace).List(api.ListOptions{})
+		rps, err := clientset.Extensions().ReplicaSets(namespace).List(metav1.ListOptions{})
 		if err != nil {
 			return err
 		}
@@ -177,7 +177,7 @@ func dumpClusterInfo(f cmdutil.Factory, cmd *cobra.Command, args []string, out i
 			return err
 		}
 
-		pods, err := clientset.Core().Pods(namespace).List(api.ListOptions{})
+		pods, err := clientset.Core().Pods(namespace).List(metav1.ListOptions{})
 		if err != nil {
 			return err
 		}

@@ -21,7 +21,7 @@ import (
 	"net/http"
 
 	. "github.com/onsi/ginkgo"
-	"k8s.io/kubernetes/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/kubernetes/test/e2e/framework"
 )
 
@@ -64,7 +64,7 @@ var _ = framework.KubeDescribe("Networking", func() {
 		}
 		for _, test := range tests {
 			By(fmt.Sprintf("testing: %s", test.path))
-			data, err := f.Client.RESTClient.Get().
+			data, err := f.ClientSet.Core().RESTClient().Get().
 				AbsPath(test.path).
 				DoRaw()
 			if err != nil {

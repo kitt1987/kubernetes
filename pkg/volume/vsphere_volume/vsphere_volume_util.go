@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+	"k8s.io/kubernetes/pkg/api/v1"
 	"k8s.io/kubernetes/pkg/cloudprovider"
 	"k8s.io/kubernetes/pkg/cloudprovider/providers/vsphere"
 	"k8s.io/kubernetes/pkg/volume"
@@ -57,7 +58,8 @@ func (util *VsphereDiskUtil) CreateVolume(v *vsphereVolumeProvisioner) (vmDiskPa
 		return "", 0, err
 	}
 
-	volSizeBytes := v.options.Capacity.Value()
+	capacity := v.options.PVC.Spec.Resources.Requests[v1.ResourceName(v1.ResourceStorage)]
+	volSizeBytes := capacity.Value()
 	// vSphere works with kilobytes, convert to KiB with rounding up
 	volSizeKB := int(volume.RoundUpSize(volSizeBytes, 1024))
 	name := volume.GenerateVolumeName(v.options.ClusterName, v.options.PVName, 255)
@@ -73,13 +75,15 @@ func (util *VsphereDiskUtil) CreateVolume(v *vsphereVolumeProvisioner) (vmDiskPa
 		switch strings.ToLower(parameter) {
 		case "diskformat":
 			volumeOptions.DiskFormat = value
+		case "datastore":
+			volumeOptions.Datastore = value
 		default:
 			return "", 0, fmt.Errorf("invalid option %q for volume plugin %s", parameter, v.plugin.GetPluginName())
 		}
 	}
 
-	// TODO: implement v.options.ProvisionerSelector parsing
-	if v.options.Selector != nil {
+	// TODO: implement PVC.Selector parsing
+	if v.options.PVC.Spec.Selector != nil {
 		return "", 0, fmt.Errorf("claim.Spec.Selector is not supported for dynamic provisioning on vSphere")
 	}
 

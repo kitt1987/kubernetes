@@ -20,20 +20,21 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/renstrom/dedent"
 	"github.com/spf13/cobra"
 
 	"k8s.io/kubernetes/pkg/kubectl"
+	"k8s.io/kubernetes/pkg/kubectl/cmd/templates"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
+	"k8s.io/kubernetes/pkg/util/i18n"
 )
 
 var (
-	namespaceLong = dedent.Dedent(`
+	namespaceLong = templates.LongDesc(`
 		Create a namespace with the specified name.`)
 
-	namespaceExample = dedent.Dedent(`
-		  # Create a new namespace named my-namespace
-		  kubectl create namespace my-namespace`)
+	namespaceExample = templates.Examples(`
+	  # Create a new namespace named my-namespace
+	  kubectl create namespace my-namespace`)
 )
 
 // NewCmdCreateNamespace is a macro command to create a new namespace
@@ -41,7 +42,7 @@ func NewCmdCreateNamespace(f cmdutil.Factory, cmdOut io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "namespace NAME [--dry-run]",
 		Aliases: []string{"ns"},
-		Short:   "Create a namespace with the specified name",
+		Short:   i18n.T("Create a namespace with the specified name"),
 		Long:    namespaceLong,
 		Example: namespaceExample,
 		Run: func(cmd *cobra.Command, args []string) {

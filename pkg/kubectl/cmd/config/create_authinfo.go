@@ -24,13 +24,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/renstrom/dedent"
 	"github.com/spf13/cobra"
 
-	"k8s.io/kubernetes/pkg/client/unversioned/clientcmd"
-	clientcmdapi "k8s.io/kubernetes/pkg/client/unversioned/clientcmd/api"
+	"k8s.io/apiserver/pkg/util/flag"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"k8s.io/kubernetes/pkg/kubectl/cmd/templates"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
-	"k8s.io/kubernetes/pkg/util/flag"
+	"k8s.io/kubernetes/pkg/util/i18n"
 )
 
 type createAuthInfoOptions struct {
@@ -55,23 +56,23 @@ const (
 )
 
 var (
-	create_authinfo_long = fmt.Sprintf(`
-Sets a user entry in kubeconfig
-Specifying a name that already exists will merge new fields on top of existing values.
+	create_authinfo_long = fmt.Sprintf(templates.LongDesc(`
+		Sets a user entry in kubeconfig
 
-  Client-certificate flags:
-    --%v=certfile --%v=keyfile
+		Specifying a name that already exists will merge new fields on top of existing values.
 
-  Bearer token flags:
-    --%v=bearer_token
+		    Client-certificate flags:
+		    --%v=certfile --%v=keyfile
 
-  Basic auth flags:
-    --%v=basic_user --%v=basic_password
+		    Bearer token flags:
+			  --%v=bearer_token
 
-  Bearer token and basic auth are mutually exclusive.
-`, clientcmd.FlagCertFile, clientcmd.FlagKeyFile, clientcmd.FlagBearerToken, clientcmd.FlagUsername, clientcmd.FlagPassword)
+		    Basic auth flags:
+			  --%v=basic_user --%v=basic_password
 
-	create_authinfo_example = dedent.Dedent(`
+		Bearer token and basic auth are mutually exclusive.`), clientcmd.FlagCertFile, clientcmd.FlagKeyFile, clientcmd.FlagBearerToken, clientcmd.FlagUsername, clientcmd.FlagPassword)
+
+	create_authinfo_example = templates.Examples(`
 		# Set only the "client-key" field on the "cluster-admin"
 		# entry, without touching other values:
 		kubectl config set-credentials cluster-admin --client-key=~/.kube/admin.key
@@ -100,7 +101,7 @@ func NewCmdConfigSetAuthInfo(out io.Writer, configAccess clientcmd.ConfigAccess)
 func newCmdConfigSetAuthInfo(out io.Writer, options *createAuthInfoOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     fmt.Sprintf("set-credentials NAME [--%v=path/to/certfile] [--%v=path/to/keyfile] [--%v=bearer_token] [--%v=basic_user] [--%v=basic_password] [--%v=provider_name] [--%v=key=value]", clientcmd.FlagCertFile, clientcmd.FlagKeyFile, clientcmd.FlagBearerToken, clientcmd.FlagUsername, clientcmd.FlagPassword, flagAuthProvider, flagAuthProviderArg),
-		Short:   "Sets a user entry in kubeconfig",
+		Short:   i18n.T("Sets a user entry in kubeconfig"),
 		Long:    create_authinfo_long,
 		Example: create_authinfo_example,
 		Run: func(cmd *cobra.Command, args []string) {
@@ -109,12 +110,8 @@ func newCmdConfigSetAuthInfo(out io.Writer, options *createAuthInfoOptions) *cob
 				return
 			}
 
-			err := options.run()
-			if err != nil {
-				fmt.Fprintf(out, "%v\n", err)
-			} else {
-				fmt.Fprintf(out, "user %q set.\n", options.name)
-			}
+			cmdutil.CheckErr(options.run())
+			fmt.Fprintf(out, "User %q set.\n", options.name)
 		},
 	}
 

@@ -20,24 +20,24 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/renstrom/dedent"
-
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/kubernetes/pkg/kubectl"
+	"k8s.io/kubernetes/pkg/kubectl/cmd/templates"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 	"k8s.io/kubernetes/pkg/kubectl/resource"
-	utilerrors "k8s.io/kubernetes/pkg/util/errors"
+	"k8s.io/kubernetes/pkg/util/i18n"
 
 	"github.com/spf13/cobra"
 )
 
 var (
-	autoscaleLong = dedent.Dedent(`
+	autoscaleLong = templates.LongDesc(`
 		Creates an autoscaler that automatically chooses and sets the number of pods that run in a kubernetes cluster.
 
 		Looks up a Deployment, ReplicaSet, or ReplicationController by name and creates an autoscaler that uses the given resource as a reference.
 		An autoscaler can automatically increase or decrease number of pods deployed within the system as needed.`)
 
-	autoscaleExample = dedent.Dedent(`
+	autoscaleExample = templates.Examples(`
 		# Auto scale a deployment "foo", with the number of pods between 2 and 10, target CPU utilization specified so a default autoscaling policy will be used:
 		kubectl autoscale deployment foo --min=2 --max=10
 
@@ -53,7 +53,7 @@ func NewCmdAutoscale(f cmdutil.Factory, out io.Writer) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "autoscale (-f FILENAME | TYPE NAME | TYPE/NAME) [--min=MINPODS] --max=MAXPODS [--cpu-percent=CPU] [flags]",
-		Short:   "Auto-scale a Deployment, ReplicaSet, or ReplicationController",
+		Short:   i18n.T("Auto-scale a Deployment, ReplicaSet, or ReplicationController"),
 		Long:    autoscaleLong,
 		Example: autoscaleExample,
 		Run: func(cmd *cobra.Command, args []string) {
@@ -64,12 +64,12 @@ func NewCmdAutoscale(f cmdutil.Factory, out io.Writer) *cobra.Command {
 		ArgAliases: argAliases,
 	}
 	cmdutil.AddPrinterFlags(cmd)
-	cmd.Flags().String("generator", "horizontalpodautoscaler/v1", "The name of the API generator to use. Currently there is only 1 generator.")
+	cmd.Flags().String("generator", "horizontalpodautoscaler/v1", i18n.T("The name of the API generator to use. Currently there is only 1 generator."))
 	cmd.Flags().Int("min", -1, "The lower limit for the number of pods that can be set by the autoscaler. If it's not specified or negative, the server will apply a default value.")
 	cmd.Flags().Int("max", -1, "The upper limit for the number of pods that can be set by the autoscaler. Required.")
 	cmd.MarkFlagRequired("max")
 	cmd.Flags().Int("cpu-percent", -1, fmt.Sprintf("The target average CPU utilization (represented as a percent of requested CPU) over all the pods. If it's not specified or negative, a default autoscaling policy will be used."))
-	cmd.Flags().String("name", "", "The name for the newly created object. If not specified, the name of the input resource will be used.")
+	cmd.Flags().String("name", "", i18n.T("The name for the newly created object. If not specified, the name of the input resource will be used."))
 	cmdutil.AddDryRunFlag(cmd)
 	usage := "identifying the resource to autoscale."
 	cmdutil.AddFilenameOptionFlags(cmd, options, usage)
@@ -156,7 +156,7 @@ func RunAutoscale(f cmdutil.Factory, out io.Writer, cmd *cobra.Command, args []s
 			return err
 		}
 		if cmdutil.ShouldRecord(cmd, hpa) {
-			if err := cmdutil.RecordChangeCause(hpa.Object, f.Command()); err != nil {
+			if err := cmdutil.RecordChangeCause(hpa.Object, f.Command(cmd, false)); err != nil {
 				return err
 			}
 			object = hpa.Object
