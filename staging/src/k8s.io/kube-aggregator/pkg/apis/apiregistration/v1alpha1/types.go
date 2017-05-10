@@ -39,7 +39,9 @@ type ServiceReference struct {
 type APIServiceSpec struct {
 	// Service is a reference to the service for this API server.  It must communicate
 	// on port 443
-	Service ServiceReference `json:"service" protobuf:"bytes,1,opt,name=service"`
+	// If the Service is nil, that means the handling for the API groupversion is handled locally on this server.
+	// The call will simply delegate to the normal handler chain to be fulfilled.
+	Service *ServiceReference `json:"service" protobuf:"bytes,1,opt,name=service"`
 	// Group is the API group name this server hosts
 	Group string `json:"group,omitempty" protobuf:"bytes,2,opt,name=group"`
 	// Version is the API version this server hosts.  For example, "v1"
@@ -61,8 +63,48 @@ type APIServiceSpec struct {
 	Priority int64 `json:"priority" protobuf:"varint,6,opt,name=priority"`
 }
 
+type ConditionStatus string
+
+// These are valid condition statuses. "ConditionTrue" means a resource is in the condition;
+// "ConditionFalse" means a resource is not in the condition; "ConditionUnknown" means kubernetes
+// can't decide if a resource is in the condition or not. In the future, we could add other
+// intermediate conditions, e.g. ConditionDegraded.
+const (
+	ConditionTrue    ConditionStatus = "True"
+	ConditionFalse   ConditionStatus = "False"
+	ConditionUnknown ConditionStatus = "Unknown"
+)
+
+// APIConditionConditionType is a valid value for APIServiceCondition.Type
+type APIServiceConditionType string
+
+const (
+	// Available indicates that the service exists and is reachable
+	Available APIServiceConditionType = "Available"
+)
+
+type APIServiceCondition struct {
+	// Type is the type of the condition.
+	Type APIServiceConditionType `json:"type" protobuf:"bytes,1,opt,name=type,casttype=APIServiceConditionType"`
+	// Status is the status of the condition.
+	// Can be True, False, Unknown.
+	Status ConditionStatus `json:"status" protobuf:"bytes,2,opt,name=status,casttype=ConditionStatus"`
+	// Last time the condition transitioned from one status to another.
+	// +optional
+	LastTransitionTime metav1.Time `json:"lastTransitionTime,omitempty" protobuf:"bytes,3,opt,name=lastTransitionTime"`
+	// Unique, one-word, CamelCase reason for the condition's last transition.
+	// +optional
+	Reason string `json:"reason,omitempty" protobuf:"bytes,4,opt,name=reason"`
+	// Human-readable message indicating details about last transition.
+	// +optional
+	Message string `json:"message,omitempty" protobuf:"bytes,5,opt,name=message"`
+}
+
 // APIServiceStatus contains derived information about an API server
 type APIServiceStatus struct {
+	// Current service state of apiService.
+	// +optional
+	Conditions []APIServiceCondition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 }
 
 // +genclient=true

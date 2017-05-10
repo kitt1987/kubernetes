@@ -37,6 +37,7 @@ import (
 	batchclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/batch/internalversion"
 	coreclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/internalversion"
 	extensionsclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/extensions/internalversion"
+	"k8s.io/kubernetes/pkg/controller"
 	deploymentutil "k8s.io/kubernetes/pkg/controller/deployment/util"
 	"k8s.io/kubernetes/pkg/util"
 )
@@ -355,7 +356,13 @@ func (reaper *StatefulSetReaper) Stop(namespace, name string, timeout time.Durat
 	}
 
 	errList := []error{}
-	for _, pod := range podList.Items {
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		controllerRef := controller.GetControllerOf(pod)
+		// Ignore Pod if it's an orphan or owned by someone else.
+		if controllerRef == nil || controllerRef.UID != ss.UID {
+			continue
+		}
 		if err := pods.Delete(pod.Name, gracePeriod); err != nil {
 			if !errors.IsNotFound(err) {
 				errList = append(errList, err)
@@ -438,6 +445,13 @@ func (reaper *DeploymentReaper) Stop(namespace, name string, timeout time.Durati
 		return deployments.Get(name, metav1.GetOptions{})
 	}, deployment.Generation, 1*time.Second, 1*time.Minute); err != nil {
 		return err
+	}
+
+	// Do not cascade deletion for overlapping deployments.
+	// A Deployment with this annotation will not create or manage anything,
+	// so we can assume any matching ReplicaSets belong to another Deployment.
+	if len(deployment.Annotations[deploymentutil.OverlapAnnotation]) > 0 {
+		return deployments.Delete(name, nil)
 	}
 
 	// Stop all replica sets belonging to this Deployment.

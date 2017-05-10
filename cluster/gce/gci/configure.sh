@@ -131,8 +131,8 @@ function install-gci-mounter-tools {
 
 # Install node problem detector binary.
 function install-node-problem-detector {
-  local -r npd_version="v0.3.0-alpha.1"
-  local -r npd_sha1="46f963fac14d92021c8b2a648a6cb0337c1bc833"
+  local -r npd_version="v0.3.0"
+  local -r npd_sha1="2e6423c5798e14464271d9c944e56a637ee5a4bc"
   local -r npd_release_path="https://storage.googleapis.com/kubernetes-release"
   local -r npd_tar="node-problem-detector-${npd_version}.tar.gz"
   download-or-bust "${npd_sha1}" "${npd_release_path}/node-problem-detector/${npd_tar}"
@@ -184,8 +184,8 @@ function install-kube-binary-config {
   if [[ "${NETWORK_PROVIDER:-}" == "kubenet" ]] || \
      [[ "${NETWORK_PROVIDER:-}" == "cni" ]]; then
     #TODO(andyzheng0831): We should make the cni version number as a k8s env variable.
-    local -r cni_tar="cni-07a8a28637e97b22eb8dfe710eeae1344f69d16e.tar.gz"
-    local -r cni_sha1="19d49f7b2b99cd2493d5ae0ace896c64e289ccbb"
+    local -r cni_tar="cni-0799f5732f2a11b329d9e3d51b9c8f2e3759f2ff.tar.gz"
+    local -r cni_sha1="1d9788b0f5420e1a219aad2cb8681823fc515e7c"
     download-or-bust "${cni_sha1}" "https://storage.googleapis.com/kubernetes-release/network-plugins/${cni_tar}"
     local -r cni_dir="${KUBE_HOME}/cni"
     mkdir -p "${cni_dir}"

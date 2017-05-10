@@ -36,6 +36,7 @@ func init() {
 func RegisterDeepCopies(scheme *runtime.Scheme) error {
 	return scheme.AddGeneratedDeepCopyFuncs(
 		conversion.GeneratedDeepCopyFunc{Fn: DeepCopy_v1alpha1_APIService, InType: reflect.TypeOf(&APIService{})},
+		conversion.GeneratedDeepCopyFunc{Fn: DeepCopy_v1alpha1_APIServiceCondition, InType: reflect.TypeOf(&APIServiceCondition{})},
 		conversion.GeneratedDeepCopyFunc{Fn: DeepCopy_v1alpha1_APIServiceList, InType: reflect.TypeOf(&APIServiceList{})},
 		conversion.GeneratedDeepCopyFunc{Fn: DeepCopy_v1alpha1_APIServiceSpec, InType: reflect.TypeOf(&APIServiceSpec{})},
 		conversion.GeneratedDeepCopyFunc{Fn: DeepCopy_v1alpha1_APIServiceStatus, InType: reflect.TypeOf(&APIServiceStatus{})},
@@ -53,9 +54,26 @@ func DeepCopy_v1alpha1_APIService(in interface{}, out interface{}, c *conversion
 		} else {
 			out.ObjectMeta = *newVal.(*v1.ObjectMeta)
 		}
-		if err := DeepCopy_v1alpha1_APIServiceSpec(&in.Spec, &out.Spec, c); err != nil {
+		if newVal, err := c.DeepCopy(&in.Spec); err != nil {
 			return err
+		} else {
+			out.Spec = *newVal.(*APIServiceSpec)
 		}
+		if newVal, err := c.DeepCopy(&in.Status); err != nil {
+			return err
+		} else {
+			out.Status = *newVal.(*APIServiceStatus)
+		}
+		return nil
+	}
+}
+
+func DeepCopy_v1alpha1_APIServiceCondition(in interface{}, out interface{}, c *conversion.Cloner) error {
+	{
+		in := in.(*APIServiceCondition)
+		out := out.(*APIServiceCondition)
+		*out = *in
+		out.LastTransitionTime = in.LastTransitionTime.DeepCopy()
 		return nil
 	}
 }
@@ -69,8 +87,10 @@ func DeepCopy_v1alpha1_APIServiceList(in interface{}, out interface{}, c *conver
 			in, out := &in.Items, &out.Items
 			*out = make([]APIService, len(*in))
 			for i := range *in {
-				if err := DeepCopy_v1alpha1_APIService(&(*in)[i], &(*out)[i], c); err != nil {
+				if newVal, err := c.DeepCopy(&(*in)[i]); err != nil {
 					return err
+				} else {
+					(*out)[i] = *newVal.(*APIService)
 				}
 			}
 		}
@@ -83,6 +103,11 @@ func DeepCopy_v1alpha1_APIServiceSpec(in interface{}, out interface{}, c *conver
 		in := in.(*APIServiceSpec)
 		out := out.(*APIServiceSpec)
 		*out = *in
+		if in.Service != nil {
+			in, out := &in.Service, &out.Service
+			*out = new(ServiceReference)
+			**out = **in
+		}
 		if in.CABundle != nil {
 			in, out := &in.CABundle, &out.CABundle
 			*out = make([]byte, len(*in))
@@ -97,6 +122,17 @@ func DeepCopy_v1alpha1_APIServiceStatus(in interface{}, out interface{}, c *conv
 		in := in.(*APIServiceStatus)
 		out := out.(*APIServiceStatus)
 		*out = *in
+		if in.Conditions != nil {
+			in, out := &in.Conditions, &out.Conditions
+			*out = make([]APIServiceCondition, len(*in))
+			for i := range *in {
+				if newVal, err := c.DeepCopy(&(*in)[i]); err != nil {
+					return err
+				} else {
+					(*out)[i] = *newVal.(*APIServiceCondition)
+				}
+			}
+		}
 		return nil
 	}
 }

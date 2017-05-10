@@ -31,6 +31,7 @@ package extensions
 import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/kubernetes/pkg/api"
 )
@@ -376,8 +377,7 @@ type DaemonSetUpdateStrategy struct {
 	// +optional
 	Type DaemonSetUpdateStrategyType
 
-	// Rolling update config params. Present only if DaemonSetUpdateStrategy =
-	// RollingUpdate.
+	// Rolling update config params. Present only if type = "RollingUpdate".
 	//---
 	// TODO: Update this to follow our convention for oneOf, whatever we decide it
 	// to be. Same as DeploymentStrategy.RollingUpdate.
@@ -404,38 +404,39 @@ type RollingUpdateDaemonSet struct {
 	// number is calculated from percentage by rounding up.
 	// This cannot be 0.
 	// Default value is 1.
-	// Example: when this is set to 30%, 30% of the currently running DaemonSet
-	// pods can be stopped for an update at any given time. The update starts
-	// by stopping at most 30% of the currently running DaemonSet pods and then
-	// brings up new DaemonSet pods in their place. Once the new pods are ready,
-	// it then proceeds onto other DaemonSet pods, thus ensuring that at least
-	// 70% of original number of DaemonSet pods are available at all times
-	// during the update.
+	// Example: when this is set to 30%, at most 30% of the total number of nodes
+	// that should be running the daemon pod (i.e. status.desiredNumberScheduled)
+	// can have their pods stopped for an update at any given
+	// time. The update starts by stopping at most 30% of those DaemonSet pods
+	// and then brings up new DaemonSet pods in their place. Once the new pods
+	// are available, it then proceeds onto other DaemonSet pods, thus ensuring
+	// that at least 70% of original number of DaemonSet pods are available at
+	// all times during the update.
 	// +optional
 	MaxUnavailable intstr.IntOrString
 }
 
 // DaemonSetSpec is the specification of a daemon set.
 type DaemonSetSpec struct {
-	// Selector is a label query over pods that are managed by the daemon set.
+	// A label query over pods that are managed by the daemon set.
 	// Must match in order to be controlled.
 	// If empty, defaulted to labels on Pod template.
 	// More info: http://kubernetes.io/docs/user-guide/labels#label-selectors
 	// +optional
 	Selector *metav1.LabelSelector
 
-	// Template is the object that describes the pod that will be created.
+	// An object that describes the pod that will be created.
 	// The DaemonSet will create exactly one copy of this pod on every node
 	// that matches the template's node selector (or on every node if no node
 	// selector is specified).
 	// More info: http://kubernetes.io/docs/user-guide/replication-controller#pod-template
 	Template api.PodTemplateSpec
 
-	// UpdateStrategy to replace existing DaemonSet pods with new pods.
+	// An update strategy to replace existing DaemonSet pods with new pods.
 	// +optional
 	UpdateStrategy DaemonSetUpdateStrategy
 
-	// MinReadySeconds minimum number of seconds for which a newly created DaemonSet pod should
+	// The minimum number of seconds for which a newly created DaemonSet pod should
 	// be ready without any of its container crashing, for it to be considered
 	// available. Defaults to 0 (pod will be considered available as soon as it
 	// is ready).
@@ -450,40 +451,39 @@ type DaemonSetSpec struct {
 
 // DaemonSetStatus represents the current status of a daemon set.
 type DaemonSetStatus struct {
-	// CurrentNumberScheduled is the number of nodes that are running at least 1
+	// The number of nodes that are running at least 1
 	// daemon pod and are supposed to run the daemon pod.
 	CurrentNumberScheduled int32
 
-	// NumberMisscheduled is the number of nodes that are running the daemon pod, but are
+	// The number of nodes that are running the daemon pod, but are
 	// not supposed to run the daemon pod.
 	NumberMisscheduled int32
 
-	// DesiredNumberScheduled is the total number of nodes that should be running the daemon
+	// The total number of nodes that should be running the daemon
 	// pod (including nodes correctly running the daemon pod).
 	DesiredNumberScheduled int32
 
-	// NumberReady is the number of nodes that should be running the daemon pod and have one
+	// The number of nodes that should be running the daemon pod and have one
 	// or more of the daemon pod running and ready.
 	NumberReady int32
 
-	// ObservedGeneration is the most recent generation observed by the daemon set controller.
+	// The most recent generation observed by the daemon set controller.
 	// +optional
 	ObservedGeneration int64
 
-	// UpdatedNumberScheduled is the total number of nodes that are running updated
-	// daemon pod
+	// The total number of nodes that are running updated daemon pod
 	// +optional
 	UpdatedNumberScheduled int32
 
-	// NumberAvailable is the number of nodes that should be running the
+	// The number of nodes that should be running the
 	// daemon pod and have one or more of the daemon pod running and
-	// available (ready for at least minReadySeconds)
+	// available (ready for at least spec.minReadySeconds)
 	// +optional
 	NumberAvailable int32
 
-	// NumberUnavailable is the number of nodes that should be running the
+	// The number of nodes that should be running the
 	// daemon pod and have none of the daemon pod running and available
-	// (ready for at least minReadySeconds)
+	// (ready for at least spec.minReadySeconds)
 	// +optional
 	NumberUnavailable int32
 }
@@ -498,12 +498,12 @@ type DaemonSet struct {
 	// +optional
 	metav1.ObjectMeta
 
-	// Spec defines the desired behavior of this daemon set.
+	// The desired behavior of this daemon set.
 	// More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#spec-and-status
 	// +optional
 	Spec DaemonSetSpec
 
-	// Status is the current status of this daemon set. This data may be
+	// The current status of this daemon set. This data may be
 	// out of date by some window of time.
 	// Populated by the system.
 	// Read-only.
@@ -527,7 +527,7 @@ type DaemonSetList struct {
 	// +optional
 	metav1.ListMeta
 
-	// Items is a list of daemon sets.
+	// A list of daemon sets.
 	Items []DaemonSet
 }
 
@@ -949,15 +949,23 @@ type RunAsUserStrategyOptions struct {
 	Rule RunAsUserStrategy
 	// Ranges are the allowed ranges of uids that may be used.
 	// +optional
-	Ranges []IDRange
+	Ranges []UserIDRange
 }
 
-// IDRange provides a min/max of an allowed range of IDs.
-type IDRange struct {
+// UserIDRange provides a min/max of an allowed range of UserIDs.
+type UserIDRange struct {
 	// Min is the start of the range, inclusive.
-	Min int64
+	Min types.UnixUserID
 	// Max is the end of the range, inclusive.
-	Max int64
+	Max types.UnixUserID
+}
+
+// GroupIDRange provides a min/max of an allowed range of GroupIDs.
+type GroupIDRange struct {
+	// Min is the start of the range, inclusive.
+	Min types.UnixGroupID
+	// Max is the end of the range, inclusive.
+	Max types.UnixGroupID
 }
 
 // RunAsUserStrategy denotes strategy types for generating RunAsUser values for a
@@ -981,7 +989,7 @@ type FSGroupStrategyOptions struct {
 	// Ranges are the allowed ranges of fs groups.  If you would like to force a single
 	// fs group then supply a single range with the same start and end.
 	// +optional
-	Ranges []IDRange
+	Ranges []GroupIDRange
 }
 
 // FSGroupStrategyType denotes strategy types for generating FSGroup values for a
@@ -1003,7 +1011,7 @@ type SupplementalGroupsStrategyOptions struct {
 	// Ranges are the allowed ranges of supplemental groups.  If you would like to force a single
 	// supplemental group then supply a single range with the same start and end.
 	// +optional
-	Ranges []IDRange
+	Ranges []GroupIDRange
 }
 
 // SupplementalGroupsStrategyType denotes strategy types for determining valid supplemental
@@ -1062,21 +1070,17 @@ type NetworkPolicySpec struct {
 type NetworkPolicyIngressRule struct {
 	// List of ports which should be made accessible on the pods selected for this rule.
 	// Each item in this list is combined using a logical OR.
-	// If this field is not provided, this rule matches all ports (traffic not restricted by port).
-	// If this field is empty, this rule matches no ports (no traffic matches).
+	// If this field is empty or missing, this rule matches all ports (traffic not restricted by port).
 	// If this field is present and contains at least one item, then this rule allows traffic
 	// only if the traffic matches at least one port in the list.
-	// TODO: Update this to be a pointer to slice as soon as auto-generation supports it.
 	// +optional
 	Ports []NetworkPolicyPort
 
 	// List of sources which should be able to access the pods selected for this rule.
 	// Items in this list are combined using a logical OR operation.
-	// If this field is not provided, this rule matches all sources (traffic not restricted by source).
-	// If this field is empty, this rule matches no sources (no traffic matches).
+	// If this field is empty or missing, this rule matches all sources (traffic not restricted by source).
 	// If this field is present and contains at least on item, this rule allows traffic only if the
 	// traffic matches at least one item in the from list.
-	// TODO: Update this to be a pointer to slice as soon as auto-generation supports it.
 	// +optional
 	From []NetworkPolicyPeer
 }
@@ -1101,7 +1105,6 @@ type NetworkPolicyPeer struct {
 
 	// This is a label selector which selects Pods in this namespace.
 	// This field follows standard label selector semantics.
-	// If not provided, this selector selects no pods.
 	// If present but empty, this selector selects all pods in this namespace.
 	// +optional
 	PodSelector *metav1.LabelSelector
@@ -1109,7 +1112,6 @@ type NetworkPolicyPeer struct {
 	// Selects Namespaces using cluster scoped-labels.  This
 	// matches all pods in all namespaces selected by this label selector.
 	// This field follows standard label selector semantics.
-	// If omitted, this selector selects no namespaces.
 	// If present but empty, this selector selects all namespaces.
 	// +optional
 	NamespaceSelector *metav1.LabelSelector

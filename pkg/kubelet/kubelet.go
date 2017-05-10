@@ -63,8 +63,8 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/config"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/dockershim"
+	"k8s.io/kubernetes/pkg/kubelet/dockershim/libdocker"
 	dockerremote "k8s.io/kubernetes/pkg/kubelet/dockershim/remote"
-	"k8s.io/kubernetes/pkg/kubelet/dockertools"
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/pkg/kubelet/eviction"
 	"k8s.io/kubernetes/pkg/kubelet/gpu"
@@ -101,7 +101,6 @@ import (
 	"k8s.io/kubernetes/pkg/util/mount"
 	nodeutil "k8s.io/kubernetes/pkg/util/node"
 	"k8s.io/kubernetes/pkg/util/oom"
-	"k8s.io/kubernetes/pkg/util/procfs"
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm/predicates"
 )
@@ -187,7 +186,7 @@ type KubeletBootstrap interface {
 }
 
 // create and initialize a Kubelet instance
-type KubeletBuilder func(kubeCfg *componentconfig.KubeletConfiguration, kubeDeps *KubeletDeps, standaloneMode bool) (KubeletBootstrap, error)
+type KubeletBuilder func(kubeCfg *componentconfig.KubeletConfiguration, kubeDeps *KubeletDeps, standaloneMode bool, hostnameOverride, nodeIP, dockershimRootDir, providerID string) (KubeletBootstrap, error)
 
 // KubeletDeps is a bin for things we might consider "injected dependencies" -- objects constructed
 // at runtime that are necessary for running the Kubelet. This is a temporary solution for grouping
@@ -220,7 +219,7 @@ type KubeletDeps struct {
 	CAdvisorInterface  cadvisor.Interface
 	Cloud              cloudprovider.Interface
 	ContainerManager   cm.ContainerManager
-	DockerClient       dockertools.DockerInterface
+	DockerClient       libdocker.Interface
 	EventClient        v1core.EventsGetter
 	KubeClient         clientset.Interface
 	ExternalKubeClient clientgoclientset.Interface
@@ -282,7 +281,7 @@ func getRuntimeAndImageServices(config *componentconfig.KubeletConfiguration) (i
 
 // NewMainKubelet instantiates a new Kubelet object along with all the required internal modules.
 // No initialization of Kubelet and its modules should happen here.
-func NewMainKubelet(kubeCfg *componentconfig.KubeletConfiguration, kubeDeps *KubeletDeps, standaloneMode bool) (*Kubelet, error) {
+func NewMainKubelet(kubeCfg *componentconfig.KubeletConfiguration, kubeDeps *KubeletDeps, standaloneMode bool, hostnameOverride, nodeIP, dockershimRootDir, providerID string) (*Kubelet, error) {
 	if kubeCfg.RootDirectory == "" {
 		return nil, fmt.Errorf("invalid root directory %q", kubeCfg.RootDirectory)
 	}
@@ -302,7 +301,7 @@ func NewMainKubelet(kubeCfg *componentconfig.KubeletConfiguration, kubeDeps *Kub
 		}
 	}
 
-	hostname := nodeutil.GetHostname(kubeCfg.HostnameOverride)
+	hostname := nodeutil.GetHostname(hostnameOverride)
 	// Query the cloud provider for our node name, default to hostname
 	nodeName := types.NodeName(hostname)
 	if kubeDeps.Cloud != nil {
@@ -363,17 +362,6 @@ func NewMainKubelet(kubeCfg *componentconfig.KubeletConfiguration, kubeDeps *Kub
 		MaxPodGracePeriodSeconds: int64(kubeCfg.EvictionMaxPodGracePeriod),
 		Thresholds:               thresholds,
 		KernelMemcgNotification:  kubeCfg.ExperimentalKernelMemcgNotification,
-	}
-
-	var dockerExecHandler dockertools.ExecHandler
-	switch kubeCfg.DockerExecHandlerName {
-	case "native":
-		dockerExecHandler = &dockertools.NativeExecHandler{}
-	case "nsenter":
-		dockerExecHandler = &dockertools.NsenterExecHandler{}
-	default:
-		glog.Warningf("Unknown Docker exec handler %q; defaulting to native", kubeCfg.DockerExecHandlerName)
-		dockerExecHandler = &dockertools.NativeExecHandler{}
 	}
 
 	serviceIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
@@ -445,6 +433,8 @@ func NewMainKubelet(kubeCfg *componentconfig.KubeletConfiguration, kubeDeps *Kub
 		diskSpaceManager:               diskSpaceManager,
 		cloud:                          kubeDeps.Cloud,
 		autoDetectCloudProvider:   (componentconfigv1alpha1.AutoDetectCloudProvider == kubeCfg.CloudProvider),
+		externalCloudProvider:     cloudprovider.IsExternal(kubeCfg.CloudProvider),
+		providerID:                providerID,
 		nodeRef:                   nodeRef,
 		nodeLabels:                kubeCfg.NodeLabels,
 		nodeStatusUpdateFrequency: kubeCfg.NodeStatusUpdateFrequency.Duration,
@@ -462,7 +452,7 @@ func NewMainKubelet(kubeCfg *componentconfig.KubeletConfiguration, kubeDeps *Kub
 		cpuCFSQuota:       kubeCfg.CPUCFSQuota,
 		daemonEndpoints:   daemonEndpoints,
 		containerManager:  kubeDeps.ContainerManager,
-		nodeIP:            net.ParseIP(kubeCfg.NodeIP),
+		nodeIP:            net.ParseIP(nodeIP),
 		clock:             clock.RealClock{},
 		outOfDiskTransitionFrequency:            kubeCfg.OutOfDiskTransitionFrequency.Duration,
 		enableCustomMetrics:                     kubeCfg.EnableCustomMetrics,
@@ -504,7 +494,6 @@ func NewMainKubelet(kubeCfg *componentconfig.KubeletConfiguration, kubeDeps *Kub
 		return nil, err
 	}
 
-	procFs := procfs.NewProcFS()
 	imageBackOff := flowcontrol.NewBackOff(backOffPeriod, MaxContainerBackOff)
 
 	klet.livenessManager = proberesults.NewManager()
@@ -537,11 +526,16 @@ func NewMainKubelet(kubeCfg *componentconfig.KubeletConfiguration, kubeDeps *Kub
 	// Remote runtime shim just cannot talk back to kubelet, so it doesn't
 	// support bandwidth shaping or hostports till #35457. To enable legacy
 	// features, replace with networkHost.
-	var nl *noOpLegacyHost
+	var nl *NoOpLegacyHost
 	pluginSettings.LegacyRuntimeHost = nl
 
 	// rktnetes cannot be run with CRI.
-	if kubeCfg.ContainerRuntime != "rkt" && kubeCfg.EnableCRI {
+	// TODO(yujuhong): Remove the EnableCRI field.
+	if kubeCfg.ContainerRuntime != "rkt" {
+		kubeCfg.EnableCRI = true
+	}
+
+	if kubeCfg.EnableCRI {
 		// kubelet defers to the runtime shim to setup networking. Setting
 		// this to nil will prevent it from trying to invoke the plugin.
 		// It's easier to always probe and initialize plugins till cri
@@ -553,7 +547,8 @@ func NewMainKubelet(kubeCfg *componentconfig.KubeletConfiguration, kubeDeps *Kub
 			// Create and start the CRI shim running as a grpc server.
 			streamingConfig := getStreamingConfig(kubeCfg, kubeDeps)
 			ds, err := dockershim.NewDockerService(klet.dockerClient, kubeCfg.SeccompProfileRoot, kubeCfg.PodInfraContainerImage,
-				streamingConfig, &pluginSettings, kubeCfg.RuntimeCgroups, kubeCfg.CgroupDriver, dockerExecHandler)
+				streamingConfig, &pluginSettings, kubeCfg.RuntimeCgroups, kubeCfg.CgroupDriver, kubeCfg.DockerExecHandlerName, dockershimRootDir,
+				!kubeCfg.DockerEnableSharedPID)
 			if err != nil {
 				return nil, err
 			}
@@ -568,10 +563,15 @@ func NewMainKubelet(kubeCfg *componentconfig.KubeletConfiguration, kubeDeps *Kub
 				// The unix socket for kubelet <-> dockershim communication.
 				ep = "/var/run/dockershim.sock"
 			)
-			kubeCfg.RemoteRuntimeEndpoint, kubeCfg.RemoteImageEndpoint = ep, ep
+			if len(kubeCfg.RemoteRuntimeEndpoint) == 0 {
+				kubeCfg.RemoteRuntimeEndpoint = ep
+			}
+			if len(kubeCfg.RemoteImageEndpoint) == 0 {
+				kubeCfg.RemoteImageEndpoint = ep
+			}
 
 			glog.V(2).Infof("Starting the GRPC server for the docker CRI shim.")
-			server := dockerremote.NewDockerServer(ep, ds)
+			server := dockerremote.NewDockerServer(kubeCfg.RemoteRuntimeEndpoint, ds)
 			if err := server.Start(); err != nil {
 				return nil, err
 			}
@@ -598,7 +598,6 @@ func NewMainKubelet(kubeCfg *componentconfig.KubeletConfiguration, kubeDeps *Kub
 			machineInfo,
 			klet.podManager,
 			kubeDeps.OSInterface,
-			klet.networkPlugin,
 			klet,
 			klet.httpClient,
 			imageBackOff,
@@ -615,76 +614,36 @@ func NewMainKubelet(kubeCfg *componentconfig.KubeletConfiguration, kubeDeps *Kub
 		klet.containerRuntime = runtime
 		klet.runner = runtime
 	} else {
-		switch kubeCfg.ContainerRuntime {
-		case "docker":
-			runtime := dockertools.NewDockerManager(
-				kubeDeps.DockerClient,
-				kubecontainer.FilterEventRecorder(kubeDeps.Recorder),
-				klet.livenessManager,
-				containerRefManager,
-				klet.podManager,
-				machineInfo,
-				kubeCfg.PodInfraContainerImage,
-				float32(kubeCfg.RegistryPullQPS),
-				int(kubeCfg.RegistryBurst),
-				ContainerLogsDir,
-				kubeDeps.OSInterface,
-				klet.networkPlugin,
-				klet,
-				klet.httpClient,
-				dockerExecHandler,
-				kubeDeps.OOMAdjuster,
-				procFs,
-				klet.cpuCFSQuota,
-				imageBackOff,
-				kubeCfg.SerializeImagePulls,
-				kubeCfg.EnableCustomMetrics,
-				// If using "kubenet", the Kubernetes network plugin that wraps
-				// CNI's bridge plugin, it knows how to set the hairpin veth flag
-				// so we tell the container runtime to back away from setting it.
-				// If the kubelet is started with any other plugin we can't be
-				// sure it handles the hairpin case so we instruct the docker
-				// runtime to set the flag instead.
-				klet.hairpinMode == componentconfig.HairpinVeth && kubeCfg.NetworkPluginName != "kubenet",
-				kubeCfg.SeccompProfileRoot,
-				kubeDeps.ContainerRuntimeOptions...,
-			)
-			klet.containerRuntime = runtime
-			klet.runner = kubecontainer.DirectStreamingRunner(runtime)
-		case "rkt":
-			// TODO: Include hairpin mode settings in rkt?
-			conf := &rkt.Config{
-				Path:            kubeCfg.RktPath,
-				Stage1Image:     kubeCfg.RktStage1Image,
-				InsecureOptions: "image,ondisk",
-			}
-			runtime, err := rkt.New(
-				kubeCfg.RktAPIEndpoint,
-				conf,
-				klet,
-				kubeDeps.Recorder,
-				containerRefManager,
-				klet.podManager,
-				klet.livenessManager,
-				klet.httpClient,
-				klet.networkPlugin,
-				klet.hairpinMode == componentconfig.HairpinVeth,
-				utilexec.New(),
-				kubecontainer.RealOS{},
-				imageBackOff,
-				kubeCfg.SerializeImagePulls,
-				float32(kubeCfg.RegistryPullQPS),
-				int(kubeCfg.RegistryBurst),
-				kubeCfg.RuntimeRequestTimeout.Duration,
-			)
-			if err != nil {
-				return nil, err
-			}
-			klet.containerRuntime = runtime
-			klet.runner = kubecontainer.DirectStreamingRunner(runtime)
-		default:
-			return nil, fmt.Errorf("unsupported container runtime %q specified", kubeCfg.ContainerRuntime)
+		// TODO: Include hairpin mode settings in rkt?
+		conf := &rkt.Config{
+			Path:            kubeCfg.RktPath,
+			Stage1Image:     kubeCfg.RktStage1Image,
+			InsecureOptions: "image,ondisk",
 		}
+		runtime, err := rkt.New(
+			kubeCfg.RktAPIEndpoint,
+			conf,
+			klet,
+			kubeDeps.Recorder,
+			containerRefManager,
+			klet.podManager,
+			klet.livenessManager,
+			klet.httpClient,
+			klet.networkPlugin,
+			klet.hairpinMode == componentconfig.HairpinVeth,
+			utilexec.New(),
+			kubecontainer.RealOS{},
+			imageBackOff,
+			kubeCfg.SerializeImagePulls,
+			float32(kubeCfg.RegistryPullQPS),
+			int(kubeCfg.RegistryBurst),
+			kubeCfg.RuntimeRequestTimeout.Duration,
+		)
+		if err != nil {
+			return nil, err
+		}
+		klet.containerRuntime = runtime
+		klet.runner = kubecontainer.DirectStreamingRunner(runtime)
 	}
 
 	// TODO: Factor out "StatsProvider" from Kubelet so we don't have a cyclic dependency
@@ -834,7 +793,7 @@ type Kubelet struct {
 
 	hostname      string
 	nodeName      types.NodeName
-	dockerClient  dockertools.DockerInterface
+	dockerClient  libdocker.Interface
 	runtimeCache  kubecontainer.RuntimeCache
 	kubeClient    clientset.Interface
 	iptClient     utilipt.Interface
@@ -947,7 +906,8 @@ type Kubelet struct {
 	// Cloud provider interface.
 	cloud                   cloudprovider.Interface
 	autoDetectCloudProvider bool
-
+	// Indicates that the node initialization happens in an external cloud controller
+	externalCloudProvider bool
 	// Reference to this node.
 	nodeRef *clientv1.ObjectReference
 
@@ -1040,6 +1000,9 @@ type Kubelet struct {
 
 	// If non-nil, use this IP address for the node
 	nodeIP net.IP
+
+	// If non-nil, this is a unique identifier for the node in an external database, eg. cloudprovider
+	providerID string
 
 	// clock is an interface that provides time related functionality in a way that makes it
 	// easy to test the code.
@@ -1159,17 +1122,22 @@ func (kl *Kubelet) StartGarbageCollection() {
 		}
 	}, ContainerGCPeriod, wait.NeverStop)
 
-	loggedImageGCFailure := false
+	prevImageGCFailed := false
 	go wait.Until(func() {
 		if err := kl.imageManager.GarbageCollect(); err != nil {
-			glog.Errorf("Image garbage collection failed: %v", err)
-			kl.recorder.Eventf(kl.nodeRef, v1.EventTypeWarning, events.ImageGCFailed, err.Error())
-			loggedImageGCFailure = true
+			if prevImageGCFailed {
+				glog.Errorf("Image garbage collection failed multiple times in a row: %v", err)
+				// Only create an event for repeated failures
+				kl.recorder.Eventf(kl.nodeRef, v1.EventTypeWarning, events.ImageGCFailed, err.Error())
+			} else {
+				glog.Errorf("Image garbage collection failed once. Stats initialization may not have completed yet: %v", err)
+			}
+			prevImageGCFailed = true
 		} else {
 			var vLevel glog.Level = 4
-			if loggedImageGCFailure {
+			if prevImageGCFailed {
 				vLevel = 1
-				loggedImageGCFailure = false
+				prevImageGCFailed = false
 			}
 
 			glog.V(vLevel).Infof("Image garbage collection succeeded")
@@ -1214,7 +1182,9 @@ func (kl *Kubelet) initializeModules() error {
 	}
 
 	// Step 7: Initialize GPUs
-	kl.gpuManager.Start()
+	if err := kl.gpuManager.Start(); err != nil {
+		glog.Errorf("Failed to start gpuManager %v", err)
+	}
 
 	// Step 8: Start resource analyzer
 	kl.resourceAnalyzer.Start()
@@ -1241,6 +1211,7 @@ func (kl *Kubelet) Run(updates <-chan kubetypes.PodUpdate) {
 	if kl.kubeClient == nil {
 		glog.Warning("No api server defined - no node status update will be sent.")
 	}
+
 	if err := kl.initializeModules(); err != nil {
 		kl.recorder.Eventf(kl.nodeRef, v1.EventTypeWarning, events.KubeletSetupFailed, err.Error())
 		glog.Error(err)
@@ -1551,16 +1522,12 @@ func (kl *Kubelet) syncPod(o syncPodOptions) error {
 	}
 
 	// Fetch the pull secrets for the pod
-	pullSecrets, err := kl.getPullSecretsForPod(pod)
-	if err != nil {
-		glog.Errorf("Unable to get pull secrets for pod %q: %v", format.Pod(pod), err)
-		return err
-	}
+	pullSecrets := kl.getPullSecretsForPod(pod)
 
 	// Call the container runtime's SyncPod callback
 	result := kl.containerRuntime.SyncPod(pod, apiPodStatus, podStatus, pullSecrets, kl.backOff)
 	kl.reasonCache.Update(pod.UID, result)
-	if err = result.Error(); err != nil {
+	if err := result.Error(); err != nil {
 		return err
 	}
 
@@ -2053,7 +2020,7 @@ func (kl *Kubelet) updateRuntimeUp() {
 	}
 	// Only check specific conditions when runtime integration type is cri,
 	// because the old integration doesn't populate any runtime condition.
-	if kl.kubeletConfiguration.EnableCRI {
+	if kl.kubeletConfiguration.EnableCRI && kl.kubeletConfiguration.ContainerRuntime != "rkt" {
 		if s == nil {
 			glog.Errorf("Container runtime status is nil")
 			return

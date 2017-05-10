@@ -74,16 +74,19 @@ func (m *kubeGenericRuntimeManager) generatePodSandboxConfig(pod *v1.Pod, attemp
 		Annotations: newPodAnnotations(pod),
 	}
 
+	dnsServers, dnsSearches, useClusterFirstPolicy, err := m.runtimeHelper.GetClusterDNS(pod)
+	if err != nil {
+		return nil, err
+	}
+	podSandboxConfig.DnsConfig = &runtimeapi.DNSConfig{
+		Servers:  dnsServers,
+		Searches: dnsSearches,
+	}
+	if useClusterFirstPolicy {
+		podSandboxConfig.DnsConfig.Options = defaultDNSOptions
+	}
+
 	if !kubecontainer.IsHostNetworkPod(pod) {
-		dnsServers, dnsSearches, _, err := m.runtimeHelper.GetClusterDNS(pod)
-		if err != nil {
-			return nil, err
-		}
-		podSandboxConfig.DnsConfig = &runtimeapi.DNSConfig{
-			Servers:  dnsServers,
-			Searches: dnsSearches,
-			Options:  defaultDNSOptions,
-		}
 		// TODO: Add domain support in new runtime interface
 		hostname, _, err := m.runtimeHelper.GeneratePodHostNameAndDomain(pod)
 		if err != nil {
@@ -135,7 +138,7 @@ func (m *kubeGenericRuntimeManager) generatePodSandboxLinuxConfig(pod *v1.Pod, c
 	if pod.Spec.SecurityContext != nil {
 		sc := pod.Spec.SecurityContext
 		if sc.RunAsUser != nil {
-			lc.SecurityContext.RunAsUser = &runtimeapi.Int64Value{Value: *sc.RunAsUser}
+			lc.SecurityContext.RunAsUser = &runtimeapi.Int64Value{Value: int64(*sc.RunAsUser)}
 		}
 		lc.SecurityContext.NamespaceOptions = &runtimeapi.NamespaceOption{
 			HostNetwork: pod.Spec.HostNetwork,
@@ -144,13 +147,15 @@ func (m *kubeGenericRuntimeManager) generatePodSandboxLinuxConfig(pod *v1.Pod, c
 		}
 
 		if sc.FSGroup != nil {
-			lc.SecurityContext.SupplementalGroups = append(lc.SecurityContext.SupplementalGroups, *sc.FSGroup)
+			lc.SecurityContext.SupplementalGroups = append(lc.SecurityContext.SupplementalGroups, int64(*sc.FSGroup))
 		}
 		if groups := m.runtimeHelper.GetExtraSupplementalGroupsForPod(pod); len(groups) > 0 {
 			lc.SecurityContext.SupplementalGroups = append(lc.SecurityContext.SupplementalGroups, groups...)
 		}
 		if sc.SupplementalGroups != nil {
-			lc.SecurityContext.SupplementalGroups = append(lc.SecurityContext.SupplementalGroups, sc.SupplementalGroups...)
+			for _, sg := range sc.SupplementalGroups {
+				lc.SecurityContext.SupplementalGroups = append(lc.SecurityContext.SupplementalGroups, int64(sg))
+			}
 		}
 		if sc.SELinuxOptions != nil {
 			lc.SecurityContext.SelinuxOptions = &runtimeapi.SELinuxOption{

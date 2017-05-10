@@ -37,6 +37,7 @@ import (
 	"k8s.io/apiserver/pkg/registry/rest"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/helper"
 	apiservice "k8s.io/kubernetes/pkg/api/service"
 	"k8s.io/kubernetes/pkg/api/validation"
 	"k8s.io/kubernetes/pkg/features"
@@ -87,16 +88,13 @@ func (rs *REST) Create(ctx genericapirequest.Context, obj runtime.Object) (runti
 	releaseServiceIP := false
 	defer func() {
 		if releaseServiceIP {
-			if api.IsServiceIPSet(service) {
+			if helper.IsServiceIPSet(service) {
 				rs.serviceIPs.Release(net.ParseIP(service.Spec.ClusterIP))
 			}
 		}
 	}()
 
-	nodePortOp := portallocator.StartOperation(rs.serviceNodePorts)
-	defer nodePortOp.Finish()
-
-	if api.IsServiceIPRequested(service) {
+	if helper.IsServiceIPRequested(service) {
 		// Allocate next available.
 		ip, err := rs.serviceIPs.AllocateNext()
 		if err != nil {
@@ -107,7 +105,7 @@ func (rs *REST) Create(ctx genericapirequest.Context, obj runtime.Object) (runti
 		}
 		service.Spec.ClusterIP = ip.String()
 		releaseServiceIP = true
-	} else if api.IsServiceIPSet(service) {
+	} else if helper.IsServiceIPSet(service) {
 		// Try to respect the requested IP.
 		if err := rs.serviceIPs.Allocate(net.ParseIP(service.Spec.ClusterIP)); err != nil {
 			// TODO: when validation becomes versioned, this gets more complicated.
@@ -116,6 +114,9 @@ func (rs *REST) Create(ctx genericapirequest.Context, obj runtime.Object) (runti
 		}
 		releaseServiceIP = true
 	}
+
+	nodePortOp := portallocator.StartOperation(rs.serviceNodePorts)
+	defer nodePortOp.Finish()
 
 	assignNodePorts := shouldAssignNodePorts(service)
 	svcPortToNodePort := map[int]int{}
@@ -226,7 +227,7 @@ func (rs *REST) Delete(ctx genericapirequest.Context, id string) (runtime.Object
 		return nil, err
 	}
 
-	if api.IsServiceIPSet(service) {
+	if helper.IsServiceIPSet(service) {
 		rs.serviceIPs.Release(net.ParseIP(service.Spec.ClusterIP))
 	}
 
@@ -436,7 +437,7 @@ func (rs *REST) Update(ctx genericapirequest.Context, name string, objInfo rest.
 	// The comparison loops are O(N^2), but we don't expect N to be huge
 	// (there's a hard-limit at 2^16, because they're ports; and even 4 ports would be a lot)
 	for _, oldNodePort := range oldNodePorts {
-		if !contains(newNodePorts, oldNodePort) {
+		if contains(newNodePorts, oldNodePort) {
 			continue
 		}
 		nodePortOp.ReleaseDeferred(oldNodePort)
@@ -566,12 +567,7 @@ func shouldAssignNodePorts(service *api.Service) bool {
 }
 
 func shouldCheckOrAssignHealthCheckNodePort(service *api.Service) bool {
-	if service.Spec.Type == api.ServiceTypeLoadBalancer {
-		// True if Service-type == LoadBalancer AND annotation AnnotationExternalTraffic present
-		return (utilfeature.DefaultFeatureGate.Enabled(features.ExternalTrafficLocalOnly) && apiservice.NeedsHealthCheck(service))
-	}
-	glog.V(4).Infof("Service type: %v does not need health check node port", service.Spec.Type)
-	return false
+	return (utilfeature.DefaultFeatureGate.Enabled(features.ExternalTrafficLocalOnly) && apiservice.NeedsHealthCheck(service))
 }
 
 // Loop through the service ports list, find one with the same port number and

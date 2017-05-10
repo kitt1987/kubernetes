@@ -24,10 +24,8 @@ import (
 	clientv1 "k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/tools/record"
 	proxyapp "k8s.io/kubernetes/cmd/kube-proxy/app"
-	"k8s.io/kubernetes/cmd/kube-proxy/app/options"
 	"k8s.io/kubernetes/pkg/api"
 	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
-	proxyconfig "k8s.io/kubernetes/pkg/proxy/config"
 	"k8s.io/kubernetes/pkg/util"
 	utiliptables "k8s.io/kubernetes/pkg/util/iptables"
 
@@ -40,13 +38,18 @@ type HollowProxy struct {
 
 type FakeProxyHandler struct{}
 
-func (*FakeProxyHandler) OnServiceUpdate(services []api.Service)      {}
-func (*FakeProxyHandler) OnEndpointsUpdate(endpoints []api.Endpoints) {}
+func (*FakeProxyHandler) OnServiceAdd(service *api.Service)                        {}
+func (*FakeProxyHandler) OnServiceUpdate(oldService, service *api.Service)         {}
+func (*FakeProxyHandler) OnServiceDelete(service *api.Service)                     {}
+func (*FakeProxyHandler) OnServiceSynced()                                         {}
+func (*FakeProxyHandler) OnEndpointsAdd(endpoints *api.Endpoints)                  {}
+func (*FakeProxyHandler) OnEndpointsUpdate(oldEndpoints, endpoints *api.Endpoints) {}
+func (*FakeProxyHandler) OnEndpointsDelete(endpoints *api.Endpoints)               {}
+func (*FakeProxyHandler) OnEndpointsSynced()                                       {}
 
 type FakeProxier struct{}
 
-func (*FakeProxier) OnServiceUpdate(services []api.Service) {}
-func (*FakeProxier) Sync()                                  {}
+func (*FakeProxier) Sync() {}
 func (*FakeProxier) SyncLoop() {
 	select {}
 }
@@ -55,35 +58,34 @@ func NewHollowProxyOrDie(
 	nodeName string,
 	client clientset.Interface,
 	eventClient v1core.EventsGetter,
-	endpointsConfig *proxyconfig.EndpointsConfig,
-	serviceConfig *proxyconfig.ServiceConfig,
 	iptInterface utiliptables.Interface,
 	broadcaster record.EventBroadcaster,
 	recorder record.EventRecorder,
 ) *HollowProxy {
 	// Create and start Hollow Proxy
-	config := options.NewProxyConfig()
-	config.OOMScoreAdj = util.Int32Ptr(0)
-	config.ResourceContainer = ""
-	config.NodeRef = &clientv1.ObjectReference{
+	nodeRef := &clientv1.ObjectReference{
 		Kind:      "Node",
 		Name:      nodeName,
 		UID:       types.UID(nodeName),
 		Namespace: "",
 	}
-	proxyconfig.NewSourceAPI(
-		client.Core().RESTClient(),
-		15*time.Minute,
-		serviceConfig.Channel("api"),
-		endpointsConfig.Channel("api"),
-	)
 
-	hollowProxy, err := proxyapp.NewProxyServer(client, eventClient, config, iptInterface, &FakeProxier{}, broadcaster, recorder, nil, "fake")
-	if err != nil {
-		glog.Fatalf("Error while creating ProxyServer: %v\n", err)
-	}
 	return &HollowProxy{
-		ProxyServer: hollowProxy,
+		ProxyServer: &proxyapp.ProxyServer{
+			Client:                client,
+			EventClient:           eventClient,
+			IptInterface:          iptInterface,
+			Proxier:               &FakeProxier{},
+			Broadcaster:           broadcaster,
+			Recorder:              recorder,
+			ProxyMode:             "fake",
+			NodeRef:               nodeRef,
+			OOMScoreAdj:           util.Int32Ptr(0),
+			ResourceContainer:     "",
+			ConfigSyncPeriod:      30 * time.Second,
+			ServiceEventHandler:   &FakeProxyHandler{},
+			EndpointsEventHandler: &FakeProxyHandler{},
+		},
 	}
 }
 

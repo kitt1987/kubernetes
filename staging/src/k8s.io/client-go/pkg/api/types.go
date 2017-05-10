@@ -385,6 +385,9 @@ const (
 	// BetaStorageClassAnnotation represents the beta/previous StorageClass annotation.
 	// It's currently still used and will be held for backwards compatibility
 	BetaStorageClassAnnotation = "volume.beta.kubernetes.io/storage-class"
+
+	// MountOptionAnnotation defines mount option annotation used in PVs
+	MountOptionAnnotation = "volume.beta.kubernetes.io/mount-options"
 )
 
 // +genclient=true
@@ -653,10 +656,20 @@ type ISCSIVolumeSource struct {
 	// the ReadOnly setting in VolumeMounts.
 	// +optional
 	ReadOnly bool
-	// Required: list of iSCSI target portal ips for high availability.
+	// Optional: list of iSCSI target portal ips for high availability.
 	// the portal is either an IP or ip_addr:port if port is other than default (typically TCP ports 860 and 3260)
 	// +optional
 	Portals []string
+	// Optional: whether support iSCSI Discovery CHAP authentication
+	// +optional
+	DiscoveryCHAPAuth bool
+	// Optional: whether support iSCSI Session CHAP authentication
+	// +optional
+	SessionCHAPAuth bool
+	// Optional: CHAP secret for iSCSI target and initiator authentication.
+	// The secret is used if either DiscoveryCHAPAuth or SessionCHAPAuth is true
+	// +optional
+	SecretRef *LocalObjectReference
 }
 
 // Represents a Fibre Channel volume.
@@ -1250,7 +1263,7 @@ type EnvVar struct {
 // Only one of its fields may be set.
 type EnvVarSource struct {
 	// Selects a field of the pod: supports metadata.name, metadata.namespace, metadata.labels, metadata.annotations,
-	// spec.nodeName, spec.serviceAccountName, status.podIP.
+	// spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP.
 	// +optional
 	FieldRef *ObjectFieldSelector
 	// Selects a resource of the container: only resources limits and requests
@@ -1391,6 +1404,9 @@ type TCPSocketAction struct {
 	// Required: Port to connect to.
 	// +optional
 	Port intstr.IntOrString
+	// Optional: Host name to connect to, defaults to the pod IP.
+	// +optional
+	Host string
 }
 
 // ExecAction describes a "run in container" action.
@@ -1886,9 +1902,7 @@ type PodAffinityTerm struct {
 	// +optional
 	LabelSelector *metav1.LabelSelector
 	// namespaces specifies which namespaces the labelSelector applies to (matches against);
-	// nil list means "this pod's namespace," empty list means "all namespaces"
-	// The json tag here is not "omitempty" since we need to distinguish nil and empty.
-	// See https://golang.org/pkg/encoding/json/#Marshal for more details.
+	// null or empty list means "this pod's namespace"
 	Namespaces []string
 	// This pod should be co-located (affinity) or not co-located (anti-affinity) with the pods matching
 	// the labelSelector in the specified namespaces, where co-located is defined as running on a node
@@ -2085,6 +2099,17 @@ type PodSpec struct {
 	// If specified, the pod's tolerations.
 	// +optional
 	Tolerations []Toleration
+	// HostAliases is an optional list of hosts and IPs that will be injected into the pod's hosts
+	// file if specified. This is only valid for non-hostNetwork pods.
+	// +optional
+	HostAliases []HostAlias
+}
+
+// HostAlias holds the mapping between IP and hostnames that will be injected as an entry in the
+// pod's hosts file.
+type HostAlias struct {
+	IP        string
+	Hostnames []string
 }
 
 // Sysctl defines a kernel parameter to be set
@@ -2128,7 +2153,7 @@ type PodSecurityContext struct {
 	// PodSecurityContext, the value specified in SecurityContext takes precedence
 	// for that container.
 	// +optional
-	RunAsUser *int64
+	RunAsUser *types.UnixUserID
 	// Indicates that the container must run as a non-root user.
 	// If true, the Kubelet will validate the image at runtime to ensure that it
 	// does not run as UID 0 (root) and fail to start the container if it does.
@@ -2141,7 +2166,7 @@ type PodSecurityContext struct {
 	// to the container's primary GID.  If unspecified, no groups will be added to
 	// any container.
 	// +optional
-	SupplementalGroups []int64
+	SupplementalGroups []types.UnixGroupID
 	// A special supplemental group that applies to all containers in a pod.
 	// Some volume types allow the Kubelet to change the ownership of that volume
 	// to be owned by the pod:
@@ -2152,7 +2177,7 @@ type PodSecurityContext struct {
 	//
 	// If unset, the Kubelet will not modify the ownership and permissions of any volume.
 	// +optional
-	FSGroup *int64
+	FSGroup *types.UnixGroupID
 }
 
 // PodQOSClass defines the supported qos classes of Pods.
@@ -2893,16 +2918,12 @@ type NodeCondition struct {
 
 type NodeAddressType string
 
-// These are valid address types of node. NodeLegacyHostIP is used to transit
-// from out-dated HostIP field to NodeAddress.
 const (
-	// Deprecated: NodeLegacyHostIP will be removed in 1.7.
-	NodeLegacyHostIP NodeAddressType = "LegacyHostIP"
-	NodeHostName     NodeAddressType = "Hostname"
-	NodeExternalIP   NodeAddressType = "ExternalIP"
-	NodeInternalIP   NodeAddressType = "InternalIP"
-	NodeExternalDNS  NodeAddressType = "ExternalDNS"
-	NodeInternalDNS  NodeAddressType = "InternalDNS"
+	NodeHostName    NodeAddressType = "Hostname"
+	NodeExternalIP  NodeAddressType = "ExternalIP"
+	NodeInternalIP  NodeAddressType = "InternalIP"
+	NodeExternalDNS NodeAddressType = "ExternalDNS"
+	NodeInternalDNS NodeAddressType = "InternalDNS"
 )
 
 type NodeAddress struct {
@@ -3090,8 +3111,9 @@ type DeleteOptions struct {
 	OrphanDependents *bool
 
 	// Whether and how garbage collection will be performed.
-	// Defaults to Default.
 	// Either this field or OrphanDependents may be set, but not both.
+	// The default policy is decided by the existing finalizer set in the
+	// metadata.finalizers and the resource-specific default policy.
 	// +optional
 	PropagationPolicy *DeletionPropagation
 }
@@ -3523,10 +3545,10 @@ type Secret struct {
 	// +optional
 	metav1.ObjectMeta
 
-	// Data contains the secret data.  Each key must be a valid DNS_SUBDOMAIN
-	// or leading dot followed by valid DNS_SUBDOMAIN.
-	// The serialized form of the secret data is a base64 encoded string,
-	// representing the arbitrary (possibly non-string) data value here.
+	// Data contains the secret data. Each key must consist of alphanumeric
+	// characters, '-', '_' or '.'. The serialized form of the secret data is a
+	// base64 encoded string, representing the arbitrary (possibly non-string)
+	// data value here.
 	// +optional
 	Data map[string][]byte
 
@@ -3636,7 +3658,7 @@ type ConfigMap struct {
 	metav1.ObjectMeta
 
 	// Data contains the configuration data.
-	// Each key must be a valid DNS_SUBDOMAIN with an optional leading dot.
+	// Each key must consist of alphanumeric characters, '-', '_' or '.'.
 	// +optional
 	Data map[string]string
 }
@@ -3754,7 +3776,7 @@ type SecurityContext struct {
 	// May also be set in PodSecurityContext.  If set in both SecurityContext and
 	// PodSecurityContext, the value specified in SecurityContext takes precedence.
 	// +optional
-	RunAsUser *int64
+	RunAsUser *types.UnixUserID
 	// Indicates that the container must run as a non-root user.
 	// If true, the Kubelet will validate the image at runtime to ensure that it
 	// does not run as UID 0 (root) and fail to start the container if it does.

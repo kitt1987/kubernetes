@@ -20,7 +20,9 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +32,7 @@ import (
 	"k8s.io/kubernetes/federation/apis/federation"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/events"
+	"k8s.io/kubernetes/pkg/api/helper"
 	"k8s.io/kubernetes/pkg/apis/apps"
 	"k8s.io/kubernetes/pkg/apis/autoscaling"
 	"k8s.io/kubernetes/pkg/apis/batch"
@@ -37,6 +40,7 @@ import (
 	"k8s.io/kubernetes/pkg/apis/extensions"
 	"k8s.io/kubernetes/pkg/apis/policy"
 	"k8s.io/kubernetes/pkg/apis/rbac"
+	"k8s.io/kubernetes/pkg/apis/settings"
 	"k8s.io/kubernetes/pkg/apis/storage"
 	storageutil "k8s.io/kubernetes/pkg/apis/storage/util"
 	"k8s.io/kubernetes/pkg/printers"
@@ -97,6 +101,7 @@ var (
 	clusterColumns                   = []string{"NAME", "STATUS", "AGE"}
 	networkPolicyColumns             = []string{"NAME", "POD-SELECTOR", "AGE"}
 	certificateSigningRequestColumns = []string{"NAME", "AGE", "REQUESTOR", "CONDITION"}
+	podPresetColumns                 = []string{"NAME", "AGE"}
 )
 
 func printPod(pod *api.Pod, w io.Writer, options printers.PrintOptions) error {
@@ -190,6 +195,8 @@ func AddHandlers(h *printers.HumanReadablePrinter) {
 	h.Handler(certificateSigningRequestColumns, nil, printCertificateSigningRequestList)
 	h.Handler(storageClassColumns, nil, printStorageClass)
 	h.Handler(storageClassColumns, nil, printStorageClassList)
+	h.Handler(podPresetColumns, nil, printPodPreset)
+	h.Handler(podPresetColumns, nil, printPodPresetList)
 	h.Handler(statusColumns, nil, printStatus)
 }
 
@@ -223,7 +230,8 @@ func formatEndpoints(endpoints *api.Endpoints, ports sets.String) string {
 					}
 					addr := &ss.Addresses[i]
 					if !more {
-						list = append(list, fmt.Sprintf("%s:%d", addr.IP, port.Port))
+						hostPort := net.JoinHostPort(addr.IP, strconv.Itoa(int(port.Port)))
+						list = append(list, hostPort)
 					}
 					count++
 				}
@@ -1172,7 +1180,7 @@ func printPersistentVolume(pv *api.PersistentVolume, w io.Writer, options printe
 		claimRefUID += pv.Spec.ClaimRef.Name
 	}
 
-	modesStr := api.GetAccessModesAsString(pv.Spec.AccessModes)
+	modesStr := helper.GetAccessModesAsString(pv.Spec.AccessModes)
 	reclaimPolicyStr := string(pv.Spec.PersistentVolumeReclaimPolicy)
 
 	aQty := pv.Spec.Capacity[api.ResourceStorage]
@@ -1183,7 +1191,7 @@ func printPersistentVolume(pv *api.PersistentVolume, w io.Writer, options printe
 		aSize, modesStr, reclaimPolicyStr,
 		pv.Status.Phase,
 		claimRefUID,
-		api.GetPersistentVolumeClass(pv),
+		helper.GetPersistentVolumeClass(pv),
 		pv.Status.Reason,
 		translateTimestamp(pv.CreationTimestamp),
 	); err != nil {
@@ -1221,12 +1229,12 @@ func printPersistentVolumeClaim(pvc *api.PersistentVolumeClaim, w io.Writer, opt
 	capacity := ""
 	accessModes := ""
 	if pvc.Spec.VolumeName != "" {
-		accessModes = api.GetAccessModesAsString(pvc.Status.AccessModes)
+		accessModes = helper.GetAccessModesAsString(pvc.Status.AccessModes)
 		storage = pvc.Status.Capacity[api.ResourceStorage]
 		capacity = storage.String()
 	}
 
-	if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s", name, phase, pvc.Spec.VolumeName, capacity, accessModes, api.GetPersistentVolumeClaimClass(pvc), translateTimestamp(pvc.CreationTimestamp)); err != nil {
+	if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s", name, phase, pvc.Spec.VolumeName, capacity, accessModes, helper.GetPersistentVolumeClaimClass(pvc), translateTimestamp(pvc.CreationTimestamp)); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprint(w, AppendLabels(pvc.Labels, options.ColumnLabels)); err != nil {
@@ -1896,6 +1904,19 @@ func printStorageClass(sc *storage.StorageClass, w io.Writer, options printers.P
 func printStorageClassList(scList *storage.StorageClassList, w io.Writer, options printers.PrintOptions) error {
 	for _, sc := range scList.Items {
 		if err := printStorageClass(&sc, w, options); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func printPodPreset(podPreset *settings.PodPreset, w io.Writer, options printers.PrintOptions) error {
+	return printObjectMeta(podPreset.ObjectMeta, w, options, false)
+}
+
+func printPodPresetList(list *settings.PodPresetList, w io.Writer, options printers.PrintOptions) error {
+	for i := range list.Items {
+		if err := printPodPreset(&list.Items[i], w, options); err != nil {
 			return err
 		}
 	}
