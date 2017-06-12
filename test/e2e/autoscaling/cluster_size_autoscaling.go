@@ -79,14 +79,6 @@ var _ = framework.KubeDescribe("Cluster size autoscaling [Slow]", func() {
 		c = f.ClientSet
 		framework.SkipUnlessProviderIs("gce", "gke")
 
-		nodes := framework.GetReadySchedulableNodesOrDie(f.ClientSet)
-		nodeCount = len(nodes.Items)
-		Expect(nodeCount).NotTo(BeZero())
-		cpu := nodes.Items[0].Status.Capacity[v1.ResourceCPU]
-		mem := nodes.Items[0].Status.Capacity[v1.ResourceMemory]
-		coresPerNode = int((&cpu).MilliValue() / 1000)
-		memCapacityMb = int((&mem).Value() / 1024 / 1024)
-
 		originalSizes = make(map[string]int)
 		sum := 0
 		for _, mig := range strings.Split(framework.TestContext.CloudConfig.NodeInstanceGroup, ",") {
@@ -96,6 +88,17 @@ var _ = framework.KubeDescribe("Cluster size autoscaling [Slow]", func() {
 			originalSizes[mig] = size
 			sum += size
 		}
+		// Give instances time to spin up
+		framework.ExpectNoError(framework.WaitForClusterSize(c, sum, scaleUpTimeout))
+
+		nodes := framework.GetReadySchedulableNodesOrDie(f.ClientSet)
+		nodeCount = len(nodes.Items)
+		Expect(nodeCount).NotTo(BeZero())
+		cpu := nodes.Items[0].Status.Capacity[v1.ResourceCPU]
+		mem := nodes.Items[0].Status.Capacity[v1.ResourceMemory]
+		coresPerNode = int((&cpu).MilliValue() / 1000)
+		memCapacityMb = int((&mem).Value() / 1024 / 1024)
+
 		Expect(nodeCount).Should(Equal(sum))
 
 		if framework.ProviderIs("gke") {
@@ -478,6 +481,7 @@ func runDrainTest(f *framework.Framework, migSizes map[string]int, podsPerNode, 
 	defer framework.DeleteRCAndPods(f.ClientSet, f.InternalClientset, f.Namespace.Name, "reschedulable-pods")
 
 	By("Create a PodDisruptionBudget")
+	minAvailable := intstr.FromInt(numPods - pdbSize)
 	pdb := &policy.PodDisruptionBudget{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test_pdb",
@@ -485,7 +489,7 @@ func runDrainTest(f *framework.Framework, migSizes map[string]int, podsPerNode, 
 		},
 		Spec: policy.PodDisruptionBudgetSpec{
 			Selector:     &metav1.LabelSelector{MatchLabels: labelMap},
-			MinAvailable: intstr.FromInt(numPods - pdbSize),
+			MinAvailable: &minAvailable,
 		},
 	}
 	_, err = f.StagingClient.Policy().PodDisruptionBudgets(namespace).Create(pdb)

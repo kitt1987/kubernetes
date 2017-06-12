@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/emicklei/go-restful-swagger12"
+	swagger "github.com/emicklei/go-restful-swagger12"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -221,17 +221,16 @@ type TestFactory struct {
 	UnstructuredClient kubectl.RESTClient
 	Describer          printers.Describer
 	Printer            printers.ResourcePrinter
-	CommandPrinter     printers.ResourcePrinter
 	Validator          validation.Schema
 	Namespace          string
 	ClientConfig       *restclient.Config
 	Err                error
 	Command            string
-	GenericPrinter     bool
 	TmpDir             string
 
 	ClientForMappingFunc             func(mapping *meta.RESTMapping) (resource.RESTClient, error)
 	UnstructuredClientForMappingFunc func(mapping *meta.RESTMapping) (resource.RESTClient, error)
+	OpenAPISchemaFunc                func() (*openapi.Resources, error)
 }
 
 type FakeFactory struct {
@@ -338,8 +337,8 @@ func (f *FakeFactory) Describer(*meta.RESTMapping) (printers.Describer, error) {
 	return f.tf.Describer, f.tf.Err
 }
 
-func (f *FakeFactory) PrinterForCommand(cmd *cobra.Command) (printers.ResourcePrinter, bool, error) {
-	return f.tf.CommandPrinter, f.tf.GenericPrinter, f.tf.Err
+func (f *FakeFactory) PrinterForCommand(cmd *cobra.Command, outputOpts *printers.OutputOptions, options printers.PrintOptions) (printers.ResourcePrinter, error) {
+	return f.tf.Printer, f.tf.Err
 }
 
 func (f *FakeFactory) Printer(mapping *meta.RESTMapping, options printers.PrintOptions) (printers.ResourcePrinter, error) {
@@ -462,7 +461,7 @@ func (f *FakeFactory) PrintObject(cmd *cobra.Command, mapper meta.RESTMapper, ob
 	return nil
 }
 
-func (f *FakeFactory) PrinterForMapping(cmd *cobra.Command, mapping *meta.RESTMapping, withNamespace bool) (printers.ResourcePrinter, error) {
+func (f *FakeFactory) PrinterForMapping(cmd *cobra.Command, outputOpts *printers.OutputOptions, mapping *meta.RESTMapping, withNamespace bool) (printers.ResourcePrinter, error) {
 	return f.tf.Printer, f.tf.Err
 }
 
@@ -619,8 +618,8 @@ func (f *fakeAPIFactory) UnstructuredClientForMapping(m *meta.RESTMapping) (reso
 	return f.tf.UnstructuredClient, f.tf.Err
 }
 
-func (f *fakeAPIFactory) PrinterForCommand(cmd *cobra.Command) (printers.ResourcePrinter, bool, error) {
-	return f.tf.CommandPrinter, f.tf.GenericPrinter, f.tf.Err
+func (f *fakeAPIFactory) PrinterForCommand(cmd *cobra.Command, outputOpts *printers.OutputOptions, options printers.PrintOptions) (printers.ResourcePrinter, error) {
+	return f.tf.Printer, f.tf.Err
 }
 
 func (f *fakeAPIFactory) Describer(*meta.RESTMapping) (printers.Describer, error) {
@@ -693,14 +692,14 @@ func (f *fakeAPIFactory) PrintObject(cmd *cobra.Command, mapper meta.RESTMapper,
 		return err
 	}
 
-	printer, err := f.PrinterForMapping(cmd, mapping, false)
+	printer, err := f.PrinterForMapping(cmd, nil, mapping, false)
 	if err != nil {
 		return err
 	}
 	return printer.PrintObj(obj, out)
 }
 
-func (f *fakeAPIFactory) PrinterForMapping(cmd *cobra.Command, mapping *meta.RESTMapping, withNamespace bool) (printers.ResourcePrinter, error) {
+func (f *fakeAPIFactory) PrinterForMapping(cmd *cobra.Command, outputOpts *printers.OutputOptions, mapping *meta.RESTMapping, withNamespace bool) (printers.ResourcePrinter, error) {
 	return f.tf.Printer, f.tf.Err
 }
 
@@ -712,6 +711,17 @@ func (f *fakeAPIFactory) NewBuilder() *resource.Builder {
 
 func (f *fakeAPIFactory) SuggestedPodTemplateResources() []schema.GroupResource {
 	return []schema.GroupResource{}
+}
+
+func (f *fakeAPIFactory) SwaggerSchema(schema.GroupVersionKind) (*swagger.ApiDeclaration, error) {
+	return nil, nil
+}
+
+func (f *fakeAPIFactory) OpenAPISchema(cacheDir string) (*openapi.Resources, error) {
+	if f.tf.OpenAPISchemaFunc != nil {
+		return f.tf.OpenAPISchemaFunc()
+	}
+	return &openapi.Resources{}, nil
 }
 
 func NewAPIFactory() (cmdutil.Factory, *TestFactory, runtime.Codec, runtime.NegotiatedSerializer) {

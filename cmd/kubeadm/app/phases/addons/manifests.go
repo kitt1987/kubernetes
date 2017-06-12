@@ -89,7 +89,7 @@ spec:
           name: kube-proxy
 `
 
-	KubeDNSVersion = "1.14.1"
+	KubeDNSVersion = "1.14.2"
 
 	KubeDNSDeployment = `
 
@@ -271,6 +271,9 @@ metadata:
     kubernetes.io/name: "KubeDNS"
   name: kube-dns
   namespace: kube-system
+  # Without this resourceVersion value, an update of the Service between versions will yield:
+  #   Service "kube-dns" is invalid: metadata.resourceVersion: Invalid value: "": must be specified for an update
+  resourceVersion: "0"
 spec:
   clusterIP: {{ .DNSIP }}
   ports:

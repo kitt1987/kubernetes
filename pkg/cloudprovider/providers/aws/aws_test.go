@@ -35,6 +35,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"k8s.io/apimachinery/pkg/types"
+	kubeletapis "k8s.io/kubernetes/pkg/kubelet/apis"
 )
 
 const TestClusterId = "clusterid.test"
@@ -319,6 +320,12 @@ func (self *FakeEC2) DescribeInstances(request *ec2.DescribeInstancesInput) ([]*
 	}
 
 	return matches, nil
+}
+
+func (self *FakeEC2) DescribeAddresses(request *ec2.DescribeAddressesInput) ([]*ec2.Address, error) {
+	addresses := []*ec2.Address{}
+
+	return addresses, nil
 }
 
 type FakeMetadata struct {
@@ -1050,7 +1057,7 @@ func TestFindInstancesByNodeNameCached(t *testing.T) {
 	}
 
 	nodeNames := sets.NewString(nodeNameOne)
-	returnedInstances, errr := c.getInstancesByNodeNamesCached(nodeNames)
+	returnedInstances, errr := c.getInstancesByNodeNamesCached(nodeNames, "running")
 
 	if errr != nil {
 		t.Errorf("Failed to find instance: %v", err)
@@ -1083,8 +1090,8 @@ func TestGetVolumeLabels(t *testing.T) {
 
 	assert.Nil(t, err, "Error creating Volume %v", err)
 	assert.Equal(t, map[string]string{
-		metav1.LabelZoneFailureDomain: "us-east-1a",
-		metav1.LabelZoneRegion:        "us-east-1"}, labels)
+		kubeletapis.LabelZoneFailureDomain: "us-east-1a",
+		kubeletapis.LabelZoneRegion:        "us-east-1"}, labels)
 	awsServices.ec2.AssertExpectations(t)
 }
 
@@ -1283,4 +1290,103 @@ func TestProxyProtocolEnabled(t *testing.T) {
 	}
 	result = proxyProtocolEnabled(fakeBackend)
 	assert.False(t, result, "did not expect to find %s in %s", ProxyProtocolPolicyName, policies)
+}
+
+func TestGetLoadBalancerAdditionalTags(t *testing.T) {
+	tagTests := []struct {
+		Annotations map[string]string
+		Tags        map[string]string
+	}{
+		{
+			Annotations: map[string]string{
+				ServiceAnnotationLoadBalancerAdditionalTags: "Key=Val",
+			},
+			Tags: map[string]string{
+				"Key": "Val",
+			},
+		},
+		{
+			Annotations: map[string]string{
+				ServiceAnnotationLoadBalancerAdditionalTags: "Key1=Val1, Key2=Val2",
+			},
+			Tags: map[string]string{
+				"Key1": "Val1",
+				"Key2": "Val2",
+			},
+		},
+		{
+			Annotations: map[string]string{
+				ServiceAnnotationLoadBalancerAdditionalTags: "Key1=, Key2=Val2",
+				"anotherKey":                                "anotherValue",
+			},
+			Tags: map[string]string{
+				"Key1": "",
+				"Key2": "Val2",
+			},
+		},
+		{
+			Annotations: map[string]string{
+				"Nothing": "Key1=, Key2=Val2, Key3",
+			},
+			Tags: map[string]string{},
+		},
+		{
+			Annotations: map[string]string{
+				ServiceAnnotationLoadBalancerAdditionalTags: "K=V K1=V2,Key1========, =====, ======Val, =Val, , 234,",
+			},
+			Tags: map[string]string{
+				"K":    "V K1",
+				"Key1": "",
+				"234":  "",
+			},
+		},
+	}
+
+	for _, tagTest := range tagTests {
+		result := getLoadBalancerAdditionalTags(tagTest.Annotations)
+		for k, v := range result {
+			if len(result) != len(tagTest.Tags) {
+				t.Errorf("incorrect expected length: %v != %v", result, tagTest.Tags)
+				continue
+			}
+			if tagTest.Tags[k] != v {
+				t.Errorf("%s != %s", tagTest.Tags[k], v)
+				continue
+			}
+		}
+	}
+}
+
+func TestInstanceIDFromProviderID(t *testing.T) {
+	testCases := []struct {
+		providerID string
+		instanceID string
+		fail       bool
+	}{
+		{
+			providerID: "aws://i-0194bbdb81a49b169",
+			instanceID: "i-0194bbdb81a49b169",
+			fail:       false,
+		},
+		{
+			providerID: "i-0194bbdb81a49b169",
+			instanceID: "",
+			fail:       true,
+		},
+	}
+
+	for _, test := range testCases {
+		instanceID, err := instanceIDFromProviderID(test.providerID)
+		if (err != nil) != test.fail {
+			t.Errorf("%s yielded `err != nil` as %t. expected %t", test.providerID, (err != nil), test.fail)
+		}
+
+		if test.fail {
+			continue
+		}
+
+		if instanceID != test.instanceID {
+			t.Errorf("%s yielded %s. expected %s", test.providerID, instanceID, test.instanceID)
+		}
+	}
 }
